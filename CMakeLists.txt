@@ -12,7 +12,7 @@ find_package(Eigen3 REQUIRED)
 find_package(spdlog REQUIRED)
 find_package(yaml-cpp REQUIRED)
 find_package(nlohmann_json REQUIRED)
-set(OpenVINO_DIR "/opt/intel/openvino_2024.6.0/runtime/cmake/")
+set(OpenVINO_DIR "$ENV{HOME}/.local/opt/l_openvino_toolkit_ubuntu24_2024.6.0.17404.4c0f47d2335_x86_64/runtime/cmake" CACHE PATH "OpenVINO CMake package directory")
 find_package(OpenVINO REQUIRED)
 
 include_directories(${EIGEN3_INCLUDE_DIR})

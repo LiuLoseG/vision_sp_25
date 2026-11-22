@@ -1,0 +1,25 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "local",
+      "displayName": "Local GCC / OpenVINO Ubuntu 24",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "/usr/bin/gcc",
+        "CMAKE_CXX_COMPILER": "/usr/bin/g++",
+        "CMAKE_BUILD_TYPE": "Release",
+        "OpenVINO_DIR": "$env{HOME}/.local/opt/l_openvino_toolkit_ubuntu24_2024.6.0.17404.4c0f47d2335_x86_64/runtime/cmake"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "local-demo",
+      "configurePreset": "local",
+      "targets": ["auto_aim_test"],
+      "jobs": 4
+    }
+  ]
+}
