@@ -1,0 +1,143 @@
+# rm_aim_sim（Godot 自瞄仿真器）闭环配置
+# 说明：虚拟相机固定 1440x1080、垂直 FOV 45°、零畸变；
+#       Solver 的内外参会在运行期被同帧模拟器元数据覆盖，这里的值只作占位与自检。
+#       世界系：x 前、y 左、z 上；yaw 向左为正，pitch 向下为正。
+
+enemy_color: "blue"
+
+#####-----仿真通道-----#####
+sim:
+  channel: "default"
+  # 检测后端：yolo（YOLOv5 + 传统角点矫正）或 traditional（纯灯条几何）
+  detector: "traditional"
+  # 图像采样 → 下发指令的额外延迟补偿（s）。实测 0~0.02 等效，再大会过冲。
+  aim_delay: 0.02
+  # 目标角速度前馈：消除仿真云台二阶伺服（response_hz=6）的稳态滞后。
+  # 平移靶实测这是命中率从 0% 变成 ~63% 的关键项。
+  feedforward: true
+  # 前馈所用未来瞄准角的差分步长（s）
+  ff_horizon: 0.06
+  # 角加速度前馈（默认关闭：二阶差分噪声大，实测会降低命中率）
+  ff_acc: false
+  # 目标角加速度超过该值（rad/s²）时不开火；0 表示关闭。
+  # 变速端点这类时段无论怎么预测都会打偏，停火可提高命中率但减少发弹数。
+  fire_acc_limit: 0
+  # 帧间是否也持续下发控制指令。默认 false：仿真云台在“每帧一次 + 角速度前馈”
+  # 下跟随最稳，帧间重复下发反而引入抖动（实测命中率 61% → 41%）。
+  high_rate_control: false
+
+#####-----神经网络参数-----#####
+yolo_name: yolov5
+classify_model: assets/tiny_resnet.onnx
+yolo11_model_path: assets/yolo11.xml
+yolov8_model_path: assets/yolov8.xml
+yolov5_model_path: assets/yolov5.xml
+device: CPU
+min_confidence: 0.8
+use_traditional: true
+score_threshold: 0.5
+# 仿真器里的装甲图案来自贴图，分类器对编号的判别不可靠；
+# 开启后统一按普通步兵小装甲处理，保证相邻帧名字稳定。
+relax_type_check: true
+
+#####-----ROI-----#####
+roi:
+  x: 0
+  y: 0
+  width: 1440
+  height: 1080
+
+use_roi: false
+
+#####-----传统方法参数-----#####
+threshold: 250
+max_angle_error: 45 # degree
+min_lightbar_ratio: 1.5
+max_lightbar_ratio: 20
+min_lightbar_length: 8
+min_armor_ratio: 1
+max_armor_ratio: 5
+max_side_ratio: 1.5
+max_rectangular_error: 25 # degree
+# 灯条是纯色高亮体：用 max(B,R) 而不是加权灰度，避免纯蓝灯条被压暗
+lightbar_use_max_channel: true
+# 只保留敌方颜色通道的亮像素，排除场地白色标线与背景
+lightbar_color_mask: true
+lightbar_color_diff: 40
+
+#####-----tracker参数-----#####
+min_detect_count: 5
+max_temp_lost_count: 15
+outpost_max_temp_lost_count: 75
+# 图像中心像素坐标（跟踪器优先选择靠近中心的装甲板）
+image_center: [720, 540]
+
+#####-----aimer参数-----#####
+yaw_offset: 0 # degree
+pitch_offset: 0 # degree
+comming_angle: 55 # degree
+leaving_angle: 20 # degree
+decision_speed: 7 # rad/s
+high_speed_delay_time: 0.015 # s 与仿真 weapon.delay 一致
+low_speed_delay_time: 0.015 # s planner use this value
+
+#####-----shooter参数-----#####
+first_tolerance: 2 # degree
+second_tolerance: 2 # degree
+judge_distance: 2 # m
+auto_fire: true
+# 按装甲半宽/距离折算角度容差，并取与上面固定值的较小者；0 表示只角固定值
+aim_tolerance_ratio: 0.8
+# 目标自转（|wz| > aim_spin_speed）时改用更严的容差：
+# 换板时云台要横向跨越整块装甲间距，此时“云台已对上上一条指令”容易成立，
+# 但实际处于跨板中途，打出去必然偏。复合/自转靶实测 0.8 -> 0.4 命中率 70% -> 83%。
+# 纯平移不能收紧（云台有稳态滞后，收紧后直接打不出弹：62% -> 26%）。
+aim_tolerance_ratio_spin: 0.4
+aim_spin_speed: 3.0
+
+#####-----相机-----#####
+camera_name: "sim"
+exposure_ms: 2.5
+gain: 16.9
+vid_pid: "0000:0000"
+
+R_gimbal2imubody: [1, 0, 0, 0, 1, 0, 0, 0, 1]
+
+# 1440x1080、垂直 FOV 45°: fx = fy = 540 / tan(22.5°)
+camera_matrix: [1303.58, 0, 720, 0, 1303.58, 540, 0, 0, 1]
+distort_coeffs: [0, 0, 0, 0, 0]
+
+# 理想 optical -> gimbal：x 右、y 下、z 前 转  gimbal x 前、y 左、z 上
+R_camera2gimbal: [0, 0, 1, -1, 0, 0, 0, -1, 0]
+t_camera2gimbal: [0.08, 0, 0.04]
+
+#####-----cboard参数（仿真不使用）-----#####
+quaternion_canid: 0x100
+bullet_speed_canid: 0x101
+send_canid: 0xff
+can_interface: "can0"
+
+#####-----gimbal参数（仿真不使用）-----#####
+com_port: "/dev/gimbal"
+yaw_kp: 0
+yaw_kd: 0
+pitch_kp: 0
+pitch_kd: 0
+
+#####-----planner（仿真不使用）-----#####
+fire_thresh: 0.0035
+
+max_yaw_acc: 50
+Q_yaw: [9e6, 0]
+R_yaw: [1]
+
+max_pitch_acc: 100
+Q_pitch: [9e6, 0]
+R_pitch: [1]
+
+#####-----buff_detector参数-----#####
+model: "assets/yolo11_buff_int8.xml"
+
+#####-----buff_aimer参数-----#####
+fire_gap_time: 0.700
+predict_time: 0.120

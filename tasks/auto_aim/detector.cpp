@@ -3,6 +3,7 @@
 #include <fmt/chrono.h>
 #include <yaml-cpp/yaml.h>
 
+#include <cstdlib>
 #include <filesystem>
 #include <numeric>
 
@@ -26,6 +27,17 @@ Detector::Detector(const std::string & config_path, bool debug)
   max_side_ratio_ = yaml["max_side_ratio"].as<double>();
   min_confidence_ = yaml["min_confidence"].as<double>();
   max_rectangular_error_ = yaml["max_rectangular_error"].as<double>() / 57.3;  // degree to rad
+  if (yaml["lightbar_use_max_channel"])
+    use_max_channel_ = yaml["lightbar_use_max_channel"].as<bool>();
+  if (yaml["lightbar_strict_color"])
+    strict_color_ = yaml["lightbar_strict_color"].as<bool>();
+  if (yaml["lightbar_color_mask"]) {
+    color_mask_ = yaml["lightbar_color_mask"].as<bool>();
+    mask_color_ = (yaml["enemy_color"].as<std::string>() == "red") ? Color::red : Color::blue;
+    if (yaml["lightbar_color_diff"])
+      color_diff_ = yaml["lightbar_color_diff"].as<double>();
+  }
+  if (yaml["relax_type_check"]) relax_type_check_ = yaml["relax_type_check"].as<bool>();
 
   save_path_ = "patterns";
   std::filesystem::create_directory(save_path_);
@@ -35,12 +47,56 @@ std::list<Armor> Detector::detect(const cv::Mat & bgr_img, int frame_count)
 {
   // 彩色图转灰度图
   cv::Mat gray_img;
-  cv::cvtColor(bgr_img, gray_img, cv::COLOR_BGR2GRAY);
+  if (use_max_channel_) {
+    // 纯色灯条用 max(B,R) 更鲁棒：它保留了灯条的绝对亮度，不会因为色彩权重被压暗
+    std::vector<cv::Mat> channels;
+    cv::split(bgr_img, channels);
+    cv::max(channels[0], channels[2], gray_img);
+  } else {
+    cv::cvtColor(bgr_img, gray_img, cv::COLOR_BGR2GRAY);
+  }
 
   // 进行二值化
   cv::Mat binary_img;
-  cv::threshold(gray_img, binary_img, threshold_, 255, cv::THRESH_BINARY);
-  cv::imshow("binary_img", binary_img);
+  if (color_mask_) {
+    // 只保留目标颜色通道的亮像素。
+    // 注意：不能用色差(B-R)掩码 —— 仿真/强光下灯条中心会过曝成白色，
+    // 色差为 0 会把灯条从中间挖空、只剩细边，导致灯条长度被严重低估。
+    std::vector<cv::Mat> ch;
+    cv::split(bgr_img, ch);
+    const bool want_blue = (mask_color_ == Color::blue);
+    const cv::Mat & target = want_blue ? ch[0] : ch[2];
+    const cv::Mat & other = want_blue ? ch[2] : ch[0];
+
+    cv::Mat bright;
+    cv::threshold(target, bright, threshold_, 255, cv::THRESH_BINARY);
+
+    if (color_diff_ > 0) {
+      cv::Mat diff, pure, white_src, white, keep;
+      cv::subtract(target, other, diff);
+      cv::threshold(diff, pure, color_diff_, 255, cv::THRESH_BINARY);
+      // 灯条中心过曝区域（两色通道都很高）也算灯条本体
+      cv::min(ch[0], ch[2], white_src);
+      cv::threshold(white_src, white, 200, 255, cv::THRESH_BINARY);
+      cv::bitwise_or(pure, white, keep);
+      cv::bitwise_and(bright, keep, binary_img);
+    } else {
+      binary_img = bright;
+    }
+  } else {
+    cv::threshold(gray_img, binary_img, threshold_, 255, cv::THRESH_BINARY);
+  }
+  // 只在 debug 模式下弹窗，否则无 GUI 环境（部署/仿真）会阻塞或抛异常
+  if (debug_) cv::imshow("binary_img", binary_img);
+  // 调试用：把二值图与原始图落盘，便于离线分析检测器的实际输入
+  if (const char * dump_dir = std::getenv("SP_DETECTOR_DUMP")) {
+    static int dump_n = 0;
+    if (dump_n % 50 == 0) {
+      cv::imwrite(fmt::format("{}/bin_{:04d}.png", dump_dir, dump_n), binary_img);
+      cv::imwrite(fmt::format("{}/raw_{:04d}.png", dump_dir, dump_n), bgr_img);
+    }
+    ++dump_n;
+  }
 
   // 获取轮廓点
   std::vector<std::vector<cv::Point>> contours;
@@ -49,19 +105,46 @@ std::list<Armor> Detector::detect(const cv::Mat & bgr_img, int frame_count)
   // 获取灯条
   std::size_t lightbar_id = 0;
   std::list<Lightbar> lightbars;
+  const bool lb_dbg = debug_ || std::getenv("SP_DETECTOR_DEBUG");
+  int lb_dbg_n = 0;
   for (const auto & contour : contours) {
     auto rotated_rect = cv::minAreaRect(contour);
     auto lightbar = Lightbar(rotated_rect, lightbar_id);
 
-    if (!check_geometry(lightbar)) continue;
+    if (!check_geometry(lightbar)) {
+      if (lb_dbg && lb_dbg_n++ < 12) {
+        tools::logger()->info(
+          "[lb] reject len={:.1f} ratio={:.2f} ang_err={:.1f}° (阈值 len>{:.0f} ratio {:.1f}~{:.1f} "
+          "ang<{:.0f}°)",
+          lightbar.length, lightbar.ratio, lightbar.angle_error * 57.3, min_lightbar_length_,
+          min_lightbar_ratio_, max_lightbar_ratio_, max_angle_error_ * 57.3);
+      }
+      continue;
+    }
 
     lightbar.color = get_color(bgr_img, contour);
+    // 严格色彩模式下，颜色不纯（非蓝非红）的轮廓直接丢弃
+    if (lightbar.color == Color::extinguish) continue;
+    if (lb_dbg && lb_dbg_n++ < 12) {
+      tools::logger()->info(
+        "[lb] accept len={:.1f} ratio={:.2f} color={} at ({:.0f},{:.0f})", lightbar.length,
+        lightbar.ratio, COLORS[lightbar.color], lightbar.center.x, lightbar.center.y);
+    }
     lightbars.emplace_back(lightbar);
     lightbar_id += 1;
   }
 
   // 将灯条从左到右排序
   lightbars.sort([](const Lightbar & a, const Lightbar & b) { return a.center.x < b.center.x; });
+
+  if (debug_ || std::getenv("SP_DETECTOR_DEBUG")) {
+    static int dbg = 0;
+    if (dbg++ % 30 == 0) {
+      tools::logger()->info(
+        "[detector] 轮廓={} 灯条={} 阈值={:.0f} max通道={}", contours.size(), lightbars.size(),
+        threshold_, use_max_channel_);
+    }
+  }
 
   // 获取装甲板
   std::list<Armor> armors;
@@ -70,14 +153,38 @@ std::list<Armor> Detector::detect(const cv::Mat & bgr_img, int frame_count)
       if (left->color != right->color) continue;
 
       auto armor = Armor(*left, *right);
-      if (!check_geometry(armor)) continue;
+      if (!check_geometry(armor)) {
+        if (lb_dbg && lb_dbg_n++ < 16) {
+          tools::logger()->info(
+            "[pair] 几何拒绝 ratio={:.2f} side_ratio={:.2f} rect_err={:.1f}° "
+            "(阈值 {:.1f}~{:.1f} / <{:.1f} / <{:.0f}°)",
+            armor.ratio, armor.side_ratio, armor.rectangular_error * 57.3, min_armor_ratio_,
+            max_armor_ratio_, max_side_ratio_, max_rectangular_error_ * 57.3);
+        }
+        continue;
+      }
 
       armor.pattern = get_pattern(bgr_img, armor);
       classifier_.classify(armor);
-      if (!check_name(armor)) continue;
-
-      armor.type = get_type(armor);
-      if (!check_type(armor)) continue;
+      if (lb_dbg && lb_dbg_n++ < 16) {
+        tools::logger()->info(
+          "[pair] 分类 name={} conf={:.3f} (阈值>{:.2f})", ARMOR_NAMES[armor.name],
+          armor.confidence, min_confidence_);
+      }
+      // 仿真/新场地：分类器置信度不可靠，可按开关跳过图案校验
+      if (!relax_type_check_ && !check_name(armor)) continue;
+      if (relax_type_check_) {
+        // 编号统一成普通步兵，保证相邻帧名字稳定（前哨站/基地保留，便于排除）
+        if (armor.name != ArmorName::outpost && armor.name != ArmorName::base) {
+          armor.name = ArmorName::three;
+          armor.type = ArmorType::small;
+        } else {
+          armor.type = get_type(armor);
+        }
+      } else {
+        armor.type = get_type(armor);
+        if (!check_type(armor)) continue;
+      }
 
       armor.center_norm = get_center_norm(bgr_img, armor.center);
       armors.emplace_back(armor);
@@ -244,6 +351,15 @@ bool Detector::check_geometry(const Armor & armor) const
   auto ratio_ok = armor.ratio > min_armor_ratio_ && armor.ratio < max_armor_ratio_;
   auto side_ratio_ok = armor.side_ratio < max_side_ratio_;
   auto rectangular_error_ok = armor.rectangular_error < max_rectangular_error_;
+
+  // 仿真/新场地的额外约束：真实装甲板的两根灯条几乎等长，
+  // 且"灯条间距/灯条长度"约 2.1。放宽模式下用这条硬约束排除
+  // "把不同装甲板的两根灯条错配成一对"的情况。
+  if (relax_type_check_) {
+    if (armor.side_ratio > 1.4) return false;
+    if (armor.ratio < 1.4 || armor.ratio > 3.6) return false;
+  }
+
   return ratio_ok && side_ratio_ok && rectangular_error_ok;
 }
 
@@ -263,6 +379,8 @@ bool Detector::check_name(const Armor & armor) const
 
 bool Detector::check_type(const Armor & armor) const
 {
+  if (relax_type_check_) return true;
+
   auto name_ok = armor.type == ArmorType::small
                    ? (armor.name != ArmorName::one && armor.name != ArmorName::base)
                    : (armor.name == ArmorName::one || armor.name == ArmorName::base);
@@ -279,6 +397,26 @@ bool Detector::check_type(const Armor & armor) const
 
 Color Detector::get_color(const cv::Mat & bgr_img, const std::vector<cv::Point> & contour) const
 {
+  // 色差掩码模式下二值图已经只包含目标颜色，无需再判颜色
+  if (color_mask_) return mask_color_;
+
+  if (strict_color_) {
+    // 只统计轮廓内部的真实像素。原来的实现采样轮廓边界点，细长灯条上会混入背景，
+    // 而且无法区分"纯红/纯蓝灯条"与"橙色场地标记线"，导致仿真/复杂光照下误判。
+    cv::Mat mask = cv::Mat::zeros(bgr_img.size(), CV_8U);
+    cv::drawContours(mask, std::vector<std::vector<cv::Point>>{contour}, 0, 255, cv::FILLED);
+    const cv::Scalar mean = cv::mean(bgr_img, mask);
+    const double B = mean[0], G = mean[1], R = mean[2];
+
+    // 灯条是纯色高亮：蓝条 B 远高于 R，红条 R 远高于 B；
+    // 场地橙色标线 G/R 比很高（约 0.65），红队灯条 G/R 约 0.36，可据此区分。
+    const bool is_blue = B > 100 && R < 0.45 * B && G < 0.80 * B;
+    const bool is_red = R > 100 && B < 0.45 * R && G < 0.50 * R;
+    if (is_blue) return Color::blue;
+    if (is_red) return Color::red;
+    return Color::extinguish;  // 既不像灯条也不像可攻击目标，丢弃
+  }
+
   int red_sum = 0, blue_sum = 0;
 
   for (const auto & point : contour) {

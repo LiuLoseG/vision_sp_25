@@ -91,7 +91,8 @@ struct Armor
 
   ArmorType type;
   ArmorName name;
-  ArmorPriority priority;
+  // 必须默认初始化：传统/神经网络构造函数都不设置它，而 Tracker 会按该值排序。
+  ArmorPriority priority = ArmorPriority::fifth;
   int class_id;
   cv::Rect box;
   cv::Mat pattern;

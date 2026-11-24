@@ -13,3 +13,8 @@ testvideos/
 watchdog.sh
 records_24/
 records_25/
+# 本地工具/下载缓存（Godot 引擎等，不入库）
+.tools/
+
+# Python 缓存
+__pycache__/

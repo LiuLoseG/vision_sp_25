@@ -51,6 +51,19 @@ void Solver::set_R_gimbal2world(const Eigen::Quaterniond & q)
   R_gimbal2world_ = R_gimbal2imubody_.transpose() * R_imubody2imuabs * R_gimbal2imubody_;
 }
 
+void Solver::set_camera_matrix(double fx, double fy, double cx, double cy)
+{
+  camera_matrix_ = (cv::Mat_<double>(3, 3) << fx, 0, cx, 0, fy, cy, 0, 0, 1);
+  distort_coeffs_ = cv::Mat::zeros(1, 5, CV_64F);
+}
+
+void Solver::set_camera_extrinsic(
+  const Eigen::Matrix3d & R_camera2gimbal, const Eigen::Vector3d & t_camera2gimbal)
+{
+  R_camera2gimbal_ = R_camera2gimbal;
+  t_camera2gimbal_ = t_camera2gimbal;
+}
+
 //solvePnP（获得姿态）
 void Solver::solve(Armor & armor) const
 {

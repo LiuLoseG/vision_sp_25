@@ -45,7 +45,18 @@ public:
 
   bool checkinit();
 
+  // EKF 过程噪声（Piecewise White Noise Model）。默认值与原实现一致，
+  // 自转目标的转速估计精度对提前量影响极大，可通过 yaml 调整。
+  void set_process_noise(double acc_var, double omega_acc_var)
+  {
+    acc_var_ = acc_var;
+    omega_acc_var_ = omega_acc_var;
+  }
+
 private:
+  double acc_var_ = 100.0;
+  double omega_acc_var_ = 400.0;
+
   int armor_num_;
   int switch_count_;
   int update_count_;

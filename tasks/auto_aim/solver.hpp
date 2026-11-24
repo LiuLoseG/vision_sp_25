@@ -18,6 +18,13 @@ public:
 
   void set_R_gimbal2world(const Eigen::Quaterniond & q);
 
+  // 仿真/在线标定用：运行时覆盖 yaml 中的内外参
+  void set_camera_matrix(double fx, double fy, double cx, double cy);
+  void set_camera_extrinsic(const Eigen::Matrix3d & R_camera2gimbal, const Eigen::Vector3d & t_camera2gimbal);
+  Eigen::Matrix3d R_camera2gimbal() const { return R_camera2gimbal_; }
+  Eigen::Vector3d t_camera2gimbal() const { return t_camera2gimbal_; }
+  cv::Mat camera_matrix() const { return camera_matrix_; }
+
   void solve(Armor & armor) const;
 
   std::vector<cv::Point2f> reproject_armor(

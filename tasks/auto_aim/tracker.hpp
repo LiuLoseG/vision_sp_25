@@ -38,6 +38,12 @@ private:
   int temp_lost_count_;
   int outpost_max_temp_lost_count_;
   int normal_temp_lost_count_;
+  // 图像中心像素坐标：用于“优先选择靠近图像中心的装甲板”。
+  // 默认 1440x1080，仿真/其它分辨率可通过 yaml 的 image_center 覆盖。
+  cv::Point2f image_center_{1440.0F / 2, 1080.0F / 2};
+  // EKF 过程噪声（默认与原实现一致），可由 yaml 的 ekf_acc_var / ekf_omega_acc_var 覆盖
+  double acc_var_ = 100.0;
+  double omega_acc_var_ = 400.0;
   std::string state_, pre_state_;
   Target target_;
   std::chrono::steady_clock::time_point last_timestamp_;

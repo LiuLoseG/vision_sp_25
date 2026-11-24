@@ -26,6 +26,8 @@ YOLOV5::YOLOV5(const std::string & config_path, bool debug)
   height = yaml["roi"]["height"].as<int>();
   use_roi_ = yaml["use_roi"].as<bool>();
   use_traditional_ = yaml["use_traditional"].as<bool>();
+  if (yaml["relax_type_check"]) relax_type_check_ = yaml["relax_type_check"].as<bool>();
+  if (yaml["score_threshold"]) score_threshold_ = yaml["score_threshold"].as<float>();
   roi_ = cv::Rect(x, y, width, height);
   offset_ = cv::Point2f(x, y);
 
@@ -171,17 +173,33 @@ std::list<Armor> YOLOV5::parse(
 
   tmp_img_ = bgr_img;
   for (auto it = armors.begin(); it != armors.end();) {
-    if (!check_name(*it)) {
-      it = armors.erase(it);
-      continue;
-    }
+    if (relax_type_check_) {
+      // 放宽模式：只要求是装甲板且置信度足够，不信任网络给出的编号/大小。
+      if (it->name == ArmorName::not_armor || it->confidence <= min_confidence_) {
+        it = armors.erase(it);
+        continue;
+      }
+    } else {
+      if (!check_name(*it)) {
+        it = armors.erase(it);
+        continue;
+      }
 
-    if (!check_type(*it)) {
-      it = armors.erase(it);
-      continue;
+      if (!check_type(*it)) {
+        it = armors.erase(it);
+        continue;
+      }
     }
     // 使用传统方法二次矫正角点
     if (use_traditional_) detector_.detect(*it, bgr_img);
+
+    if (relax_type_check_) {
+      // 编号统一成普通步兵；前哨站/基地保留编号，避免被误当成普通目标
+      if (it->name != ArmorName::outpost && it->name != ArmorName::base) {
+        it->name = ArmorName::three;
+        it->type = ArmorType::small;
+      }
+    }
 
     it->center_norm = get_center_norm(bgr_img, it->center);
     ++it;

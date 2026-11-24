@@ -24,6 +24,19 @@ Tracker::Tracker(const std::string & config_path, Solver & solver)
   max_temp_lost_count_ = yaml["max_temp_lost_count"].as<int>();
   outpost_max_temp_lost_count_ = yaml["outpost_max_temp_lost_count"].as<int>();
   normal_temp_lost_count_ = max_temp_lost_count_;
+  // 自转目标的转速估计精度直接决定提前量，默认值与原实现一致（100/400）
+  if (yaml["ekf_acc_var"]) acc_var_ = yaml["ekf_acc_var"].as<double>();
+  if (yaml["ekf_omega_acc_var"]) omega_acc_var_ = yaml["ekf_omega_acc_var"].as<double>();
+  if (yaml["image_center"] && yaml["image_center"].IsSequence() &&
+      yaml["image_center"].size() == 2) {
+    image_center_ = cv::Point2f(
+      yaml["image_center"][0].as<float>(), yaml["image_center"][1].as<float>());
+  } else if (yaml["camera_matrix"] && yaml["camera_matrix"].IsSequence() &&
+             yaml["camera_matrix"].size() == 9) {
+    // 没有显式配置时退而使用内参主点，避免相机分辨率改变后排序失效
+    image_center_ = cv::Point2f(
+      yaml["camera_matrix"][2].as<float>(), yaml["camera_matrix"][5].as<float>());
+  }
 }
 
 std::string Tracker::state() const { return state_; }
@@ -50,10 +63,9 @@ std::list<Target> Tracker::track(
   // });
 
   // 优先选择靠近图像中心的装甲板
-  armors.sort([](const Armor & a, const Armor & b) {
-    cv::Point2f img_center(1440 / 2, 1080 / 2);  // TODO
-    auto distance_1 = cv::norm(a.center - img_center);
-    auto distance_2 = cv::norm(b.center - img_center);
+  armors.sort([this](const Armor & a, const Armor & b) {
+    auto distance_1 = cv::norm(a.center - image_center_);
+    auto distance_2 = cv::norm(b.center - image_center_);
     return distance_1 < distance_2;
   });
 
@@ -115,10 +127,9 @@ std::tuple<omniperception::DetectionResult, std::list<Target>> Tracker::track(
   }
 
   // 优先选择靠近图像中心的装甲板
-  armors.sort([](const Armor & a, const Armor & b) {
-    cv::Point2f img_center(1440 / 2, 1080 / 2);  // TODO
-    auto distance_1 = cv::norm(a.center - img_center);
-    auto distance_2 = cv::norm(b.center - img_center);
+  armors.sort([this](const Armor & a, const Armor & b) {
+    auto distance_1 = cv::norm(a.center - image_center_);
+    auto distance_2 = cv::norm(b.center - image_center_);
     return distance_1 < distance_2;
   });
 
@@ -259,6 +270,10 @@ bool Tracker::set_target(std::list<Armor> & armors, std::chrono::steady_clock::t
     Eigen::VectorXd P0_dig{{1, 64, 1, 64, 1, 64, 0.4, 100, 1, 1, 1}};
     target_ = Target(armor, t, 0.2, 4, P0_dig);
   }
+
+  // 普通车辆目标的过程噪声可由 yaml 覆盖（默认值与历史实现一致）
+  if (armor.name != ArmorName::outpost && armor.name != ArmorName::base)
+    target_.set_process_noise(acc_var_, omega_acc_var_);
 
   return true;
 }

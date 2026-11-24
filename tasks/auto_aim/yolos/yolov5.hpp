@@ -27,10 +27,14 @@ private:
   std::string device_, model_path_;
   std::string save_path_, debug_path_;
   bool debug_, use_roi_, use_traditional_;
+  // 仿真/新场地：网络对编号的判别不可靠，开启后统一按普通步兵小装甲板处理，
+  // 避免同一块装甲板在相邻帧被判成不同编号，导致跟踪器反复丢失目标。
+  bool relax_type_check_ = false;
 
   const int class_num_ = 13;
   const float nms_threshold_ = 0.3;
-  const float score_threshold_ = 0.7;
+  // 可由 yaml 的 score_threshold 覆盖（部署到仿真/不同相机时需要放宽）
+  float score_threshold_ = 0.7;
   double min_confidence_, binary_threshold_;
 
   ov::Core core_;

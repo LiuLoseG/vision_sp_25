@@ -23,6 +23,11 @@ private:
   double first_tolerance_;
   double second_tolerance_;
   bool auto_fire_;
+  // 按装甲尺寸/距离折算的角度容差比例；0 表示退回固定 first/second_tolerance_
+  double aim_tolerance_ratio_ = 0.0;
+  // 目标自转时的容差比例（默认与 aim_tolerance_ratio_ 相同）及其切换阈值 rad/s
+  double aim_tolerance_ratio_spin_ = 0.0;
+  double aim_spin_speed_ = 3.0;
 };
 }  // namespace auto_aim
 

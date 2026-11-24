@@ -98,8 +98,10 @@ void Target::predict(double dt)
     v1 = 10;   // 前哨站加速度方差
     v2 = 0.1;  // 前哨站角加速度方差
   } else {
-    v1 = 100;  // 加速度方差
-    v2 = 400;  // 角加速度方差
+    // 默认值保持历史行为；自转靶（小陀螺）时增大转速估计噪声会让 wz 抖动，
+    // 直接放大提前量误差，可用 yaml 的 ekf_omega_acc_var 调小。
+    v1 = acc_var_;
+    v2 = omega_acc_var_;
   }
   auto a = dt * dt * dt * dt / 4;
   auto b = dt * dt * dt / 2;

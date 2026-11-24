@@ -192,10 +192,12 @@ sp_vision_25
 │   └── capture.cpp                      // 相机标定数据采集程序
 ├── CMakeLists.txt // CMake配置文件
 ├── configs        // 每台机器人的YAML配置文件
+│   ├── sim.yaml   // 自瞄仿真器（rm_aim_sim）闭环配置
 │   └── ...
 ├── io             // 硬件抽象层，见3.4软件架构
 │   └── ...
 ├── src            // 应用层，见3.4软件架构
+│   ├── standard_sim.cpp  // 步兵自瞄主程序（仿真器闭环，见 docs/sim_integration.md）
 │   └── ...
 ├── tasks          // 功能层，见3.4软件架构
 │   ├── auto_aim       // 自瞄相关算法实现
